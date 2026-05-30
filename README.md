@@ -223,7 +223,7 @@ ai-lead-scoring-engine/
 **Firoz Shaikh** — AI Implementation Specialist in training.  
 Focused on building practical AI systems using open-source tools.
 
-- LinkedIn: [linkedin.com/in/YOUR_HANDLE](https://linkedin.com/in/YOUR_HANDLE)
+- LinkedIn: www.linkedin.com/in/firoz-shaikh-ai
 - This project: real architecture, real outcomes, zero vendor lock-in.
 
 ---
