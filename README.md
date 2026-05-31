@@ -29,6 +29,13 @@ Lead form / CRM
   MCP endpoint (downstream AI agents read scores)
 ```
 
+## System Architecture
+
+![Architecture diagram](docs/architecture.svg)
+
+> Each box above links to a detailed explanation in [DECISIONS.md](DECISIONS.md).
+
+
 ---
 
 ## The Stack (All Free / Open-Source)
