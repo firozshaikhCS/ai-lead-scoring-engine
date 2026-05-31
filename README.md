@@ -220,7 +220,7 @@ ai-lead-scoring-engine/
 
 ## Built By
 
-**Firoz Shaikh** — AI Implementation Specialist in training.  
+**Firoz Shaikh** — AI Implementation Specialist.  
 Focused on building practical AI systems using open-source tools.
 
 - LinkedIn: www.linkedin.com/in/firoz-shaikh-ai
