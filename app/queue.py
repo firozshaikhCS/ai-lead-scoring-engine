@@ -19,6 +19,22 @@ except redis.ConnectionError:
     r = None
 
 
+def calculate_backoff_delay(attempt: int) -> float:
+    """
+    Returns exponential backoff delay with jitter for a given attempt number.
+    Formula: (2 ^ attempt) + random jitter between 0 and 1 second.
+
+    attempt=1 -> ~2.x seconds
+    attempt=2 -> ~4.x seconds
+    attempt=3 -> ~8.x seconds
+
+    Jitter prevents thundering herd: multiple failed requests retrying
+    simultaneously would hammer the rate limit again. Spreading them
+    randomly across a window lets the API recover.
+    """
+    return (2 ** attempt) + random.uniform(0, 1)
+
+
 def send_to_n8n_with_retry(lead_id: int, max_retries: int = 5) -> bool:
     """
     Send lead_id to n8n webhook with exponential backoff + jitter.
@@ -38,12 +54,12 @@ def send_to_n8n_with_retry(lead_id: int, max_retries: int = 5) -> bool:
 
         except requests.exceptions.Timeout:
             logger.warning(f"Timeout on attempt {attempt + 1} for lead {lead_id}")
+            time.sleep(calculate_backoff_delay(attempt))
 
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response else 0
             if status == 429 or status >= 500:
-                # Exponential backoff with jitter
-                sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                sleep_time = calculate_backoff_delay(attempt)
                 logger.warning(f"HTTP {status} — backing off {sleep_time:.2f}s")
                 time.sleep(sleep_time)
             else:
@@ -52,7 +68,7 @@ def send_to_n8n_with_retry(lead_id: int, max_retries: int = 5) -> bool:
                 return False
 
         except requests.exceptions.ConnectionError:
-            sleep_time = (2 ** attempt) + random.uniform(0, 1)
+            sleep_time = calculate_backoff_delay(attempt)
             logger.warning(f"Connection error — backing off {sleep_time:.2f}s")
             time.sleep(sleep_time)
 
