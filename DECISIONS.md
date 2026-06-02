@@ -119,3 +119,30 @@ The multi-agent business workflow (Project 2 in the portfolio) will call this en
 - Add Prometheus metrics on the FastAPI app — currently observability is limited to logs  
 - Move the n8n scoring prompt to a versioned prompt registry so prompt changes are auditable  
 - Add a dead-letter queue for leads that fail scoring after max retries — currently they stay in `pending` status forever
+
+---
+
+## Security & Reliability Audit — June 2026
+
+A full security audit was conducted after initial deployment. Findings and resolutions:
+
+### Fixed
+| Issue | Severity | Fix Applied |
+|---|---|---|
+| Score endpoint had no authentication | 🔴 Critical | Added `verify_n8n_key` dependency with separate `N8N_API_KEY` |
+| Leads stuck in `pending` after max retries | 🟡 High | Added `mark_lead_failed()` — status now set to `scoring_failed` |
+| Silent SQLite fallback if DATABASE_URL unset | 🟡 High | Replaced with explicit warning — no silent data loss |
+| Dockerfile ran as root, no health check | 🟡 Medium | Multi-stage build, non-root user, HEALTHCHECK added |
+| MCP endpoint had binary High/Low recommendation | 🟢 Low | Added Medium Priority tier (scores 4–6) |
+
+### Acknowledged — Planned Improvements
+| Issue | Priority | Plan |
+|---|---|---|
+| Rate limiting on all endpoints | Medium | Add `slowapi` in next sprint |
+| Structured JSON logging | Medium | Add `python-json-logger` for Grafana/Loki compatibility |
+| Alembic database migrations | Medium | Replace `create_all` with proper migration files |
+| True Redis queue (not retry loop) | Low | Evaluate RQ or Celery when volume exceeds 500 leads/hour |
+| Test suite using PostgreSQL not SQLite | Low | Add Docker Compose test service in CI |
+
+### What was deliberately kept simple
+The retry loop in `queue.py` is not a true message queue — it's intentional. For an SME use case at <100 leads/hour, a decoupled Celery/Redis worker adds operational complexity with no real benefit. The DECISIONS.md entry for ADR-002 documents this tradeoff explicitly. At 500+ leads/hour, this would be revisited.
