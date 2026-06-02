@@ -8,17 +8,24 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# GAP FIX: Original guide mentioned JWT but never implemented it.
-# Using simple API key auth here — swap for JWT (python-jose) in production.
 API_KEY = os.getenv("API_KEY", "dev-key-change-in-production")
+N8N_API_KEY = os.getenv("N8N_API_KEY", API_KEY)  # separate key for n8n callback
 security = HTTPBearer()
+
 
 def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)):
     if credentials.credentials != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return credentials.credentials
 
-# Create tables on startup
+
+def verify_n8n_key(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Separate verification for n8n score callback — uses N8N_API_KEY."""
+    if credentials.credentials != N8N_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid n8n service key")
+    return credentials.credentials
+
+
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(
@@ -27,10 +34,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
 @app.get("/health")
 def health_check():
-    """GAP FIX: Original had no health endpoint — essential for any deployed service."""
     return {"status": "ok"}
+
 
 @app.post("/leads/", response_model=schemas.Lead)
 def create_lead(
@@ -43,7 +51,6 @@ def create_lead(
     Receive a lead, persist it, and queue it for AI scoring.
     The score is written back asynchronously by n8n.
     """
-    # Check for duplicate email — GAP FIX: original had no deduplication
     existing = db.query(models.LeadDB).filter(
         models.LeadDB.email == lead.email
     ).first()
@@ -58,9 +65,7 @@ def create_lead(
     db.commit()
     db.refresh(db_lead)
 
-    # Queue for async AI scoring — does NOT block the API response
     background_tasks.add_task(send_to_n8n_with_retry, db_lead.id)
-
     logger.info(f"Lead {db_lead.id} created and queued for scoring")
     return db_lead
 
@@ -71,7 +76,6 @@ def get_lead(
     db: Session = Depends(database.get_db),
     api_key: str = Depends(verify_api_key)
 ):
-    """GAP FIX: Original guide had no GET endpoint — you need to retrieve leads."""
     lead = db.query(models.LeadDB).filter(models.LeadDB.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -82,12 +86,13 @@ def get_lead(
 def update_score(
     lead_id: int,
     score: int,
-    db: Session = Depends(database.get_db)
+    db: Session = Depends(database.get_db),
+    api_key: str = Depends(verify_n8n_key)  # FIX: was unauthenticated
 ):
     """
     Called by n8n after AI scoring completes.
-    GAP FIX: Original guide updated score directly in n8n PostgreSQL node
-    but had no API endpoint for n8n to call back — this is the missing piece.
+    SECURITY FIX: Now requires N8N_API_KEY — previously had no authentication.
+    Anyone on the internet could manipulate scores via this endpoint.
     """
     if not 1 <= score <= 10:
         raise HTTPException(status_code=422, detail="Score must be between 1 and 10")
@@ -99,6 +104,7 @@ def update_score(
     lead.score = score
     lead.status = "scored"
     db.commit()
+    logger.info(f"Lead {lead_id} scored: {score}/10")
     return {"lead_id": lead_id, "score": score, "status": "scored"}
 
 
@@ -123,11 +129,18 @@ def get_mcp_score(
             "message": "Scoring in progress — retry in a few seconds"
         }
 
+    if lead.status == "scoring_failed":
+        return {
+            "lead_id": lead_id,
+            "status": "scoring_failed",
+            "message": "Scoring failed after max retries — check n8n connection"
+        }
+
     return {
         "lead_id": lead_id,
         "score": lead.score,
         "status": lead.status,
-        "recommendation": "High Priority" if lead.score >= 7 else "Low Priority",
+        "recommendation": "High Priority" if lead.score >= 7 else "Medium Priority" if lead.score >= 4 else "Low Priority",
         "company": lead.company,
         "job_title": lead.job_title,
     }
@@ -140,13 +153,24 @@ def list_leads(
     db: Session = Depends(database.get_db),
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    GAP FIX: Original had no list/filter endpoint.
-    This is the core value — filter leads scoring 7+ for reps.
-    """
+    """Filter leads by score and status. Core value: filter 7+ for reps."""
     query = db.query(models.LeadDB)
     if min_score > 0:
         query = query.filter(models.LeadDB.score >= min_score)
     if status:
         query = query.filter(models.LeadDB.status == status)
     return query.order_by(models.LeadDB.score.desc()).all()
+
+
+@app.get("/leads/failed")
+def get_failed_leads(
+    db: Session = Depends(database.get_db),
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Returns leads stuck in scoring_failed status.
+    These need manual investigation — n8n connection likely broken.
+    """
+    return db.query(models.LeadDB).filter(
+        models.LeadDB.status == "scoring_failed"
+    ).all()
